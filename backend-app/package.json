@@ -1,0 +1,25 @@
+{
+  "name": "lokatani-backend",
+  "version": "1.0.0",
+  "description": "Lokatani Smart Hydroponics Pest Detection System — Node.js Backend with HTTP, WS, MQTT for QoS comparative analysis.",
+  "type": "module",
+  "scripts": {
+    "start:http": "node src/server-http.js",
+    "start:ws": "node src/server-ws.js",
+    "start:mqtt": "node src/server-mqtt.js",
+    "dev:http": "nodemon src/server-http.js",
+    "dev:ws": "nodemon src/server-ws.js",
+    "dev:mqtt": "nodemon src/server-mqtt.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mqtt": "^5.10.4",
+    "pg": "^8.13.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

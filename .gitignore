@@ -1,0 +1,12 @@
+# Mengabaikan semua file env murni atau environment lokal
+.env
+.env.*
+.env.local
+
+# TAPI TETAP IZINKAN file template ini diunggah
+!.env.docker
+
+# Log files and OS specifics (Jaga-jaga)
+*.log
+.DS_Store
+Thumbs.db

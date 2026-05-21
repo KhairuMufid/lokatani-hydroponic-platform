@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Decoded images from stress tests (thousands of files)
+uploads/images/*.jpg
+uploads/images/*.jpeg
+uploads/images/*.png
+!uploads/images/.gitkeep
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

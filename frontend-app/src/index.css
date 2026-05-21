@@ -1,0 +1,165 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply transition-colors duration-200;
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 dark:bg-surface-800 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400 dark:bg-surface-850;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/80 dark:bg-surface-800/60 backdrop-blur-xl 
+           border border-gray-200/50 dark:border-white/[0.06] 
+           rounded-2xl shadow-lg shadow-black/[0.03] dark:shadow-black/20;
+  }
+
+  .glass-card-solid {
+    @apply bg-white dark:bg-surface-850 
+           border border-gray-200 dark:border-white/[0.06] 
+           rounded-2xl shadow-lg shadow-black/[0.03] dark:shadow-black/20;
+  }
+
+  .glass-sidebar {
+    @apply bg-white/90 dark:bg-surface-900/95 backdrop-blur-2xl 
+           border-r border-gray-200/60 dark:border-white/[0.04];
+  }
+
+  .stat-card {
+    @apply glass-card p-5 flex flex-col gap-2 hover:shadow-xl 
+           hover:shadow-brand-500/[0.04] dark:hover:shadow-brand-400/[0.06] 
+           transition-shadow duration-300;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 
+           bg-brand-600 hover:bg-brand-700 active:bg-brand-800 
+           text-white font-medium rounded-xl 
+           transition-all duration-200 shadow-sm shadow-brand-600/25
+           focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:ring-offset-2 
+           dark:focus:ring-offset-surface-900;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 
+           bg-gray-100 hover:bg-gray-200 dark:bg-surface-800 dark:hover:bg-surface-850 
+           text-gray-700 dark:text-gray-300 font-medium rounded-xl 
+           border border-gray-200 dark:border-white/[0.08]
+           transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-gray-300/40 dark:focus:ring-white/10;
+  }
+
+  .severity-low {
+    @apply bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 
+           border border-blue-200 dark:border-blue-500/20;
+  }
+
+  .severity-medium {
+    @apply bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 
+           border border-amber-200 dark:border-amber-500/20;
+  }
+
+  .severity-high {
+    @apply bg-orange-100 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300 
+           border border-orange-200 dark:border-orange-500/20;
+  }
+
+  .severity-critical {
+    @apply bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300 
+           border border-red-200 dark:border-red-500/20;
+  }
+
+  .input-field {
+    @apply w-full px-3.5 py-2.5 rounded-xl 
+           bg-gray-50 dark:bg-surface-900 
+           border border-gray-200 dark:border-white/[0.08] 
+           text-gray-900 dark:text-gray-100 
+           placeholder:text-gray-400 dark:placeholder:text-gray-500
+           focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500
+           transition-all duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium
+           text-gray-600 dark:text-gray-400 
+           hover:text-gray-900 dark:hover:text-white 
+           hover:bg-gray-100 dark:hover:bg-white/[0.06]
+           transition-all duration-200;
+  }
+
+  .nav-link-active {
+    @apply text-brand-700 dark:text-brand-400 
+           bg-brand-50 dark:bg-brand-500/10 
+           hover:bg-brand-100 dark:hover:bg-brand-500/15;
+  }
+}
+
+/* Live video feed canvas overlay */
+.live-overlay-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4/3;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: #000;
+}
+
+.live-overlay-container img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.live-overlay-container canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Pulse animation for live indicator */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.live-pulse {
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+
+/* Stale frame overlay */
+.stale-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  border-radius: 1rem;
+  z-index: 10;
+}

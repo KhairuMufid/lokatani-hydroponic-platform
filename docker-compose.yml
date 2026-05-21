@@ -1,0 +1,148 @@
+# ═══════════════════════════════════════════════════════════
+# Lokatani IoT Platform — Docker Compose Orchestration
+#
+# Architecture:
+#   ┌──────────┐     ┌──────────┐     ┌───────────┐
+#   │ Frontend │────▶│ Backend  │────▶│ PostgreSQL│
+#   │ (Nginx)  │     │ (Node.js)│────▶│ Mosquitto │
+#   │ :80      │     │ :3000    │     │ :1883     │
+#   └──────────┘     │ :8080    │     │ :9001     │
+#                    └──────────┘     └───────────┘
+#
+# Network: All services communicate via Docker internal DNS.
+#          The backend resolves 'postgres' and 'mosquitto' as hostnames.
+#          The frontend Nginx resolves 'backend' for /api reverse proxy.
+#
+# Usage:
+#   docker compose up -d --build          # First deploy
+#   docker compose logs -f backend        # Stream logs
+#   docker compose exec backend node src/db/seed-users.js  # Seed admin
+#   docker compose down                   # Stop all
+# ═══════════════════════════════════════════════════════════
+
+services:
+
+  # ─── PostgreSQL Database ────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: lokatani-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-lokatani}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-No77203239}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend-app/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend-app/src/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-lokatani}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - lokatani-net
+
+  # ─── Eclipse Mosquitto MQTT Broker ──────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: lokatani-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   
+      - "9001:9001"   
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - lokatani-net
+
+  # ─── Node.js Backend (HTTP + WS + MQTT) ────────────
+  backend:
+    build:
+      context: ./backend-app
+      dockerfile: Dockerfile
+    container_name: lokatani-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - "3000:3000"   
+      - "8080:8080"   
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-No77203239}
+      DB_NAME: ${DB_NAME:-lokatani}
+      DB_POOL_MAX: 20
+      PORT_HTTP: 3000
+      PORT_WS: 8080
+      MQTT_BROKER_URL: mqtt://mosquitto:1883
+      MQTT_CLIENT_ID: lokatani-backend
+      JWT_SECRET: ${JWT_SECRET:-super-secret-jwt-key-change-in-production}
+      JWT_EXPIRES_IN_SEC: ${JWT_EXPIRES_IN_SEC:-86400}
+      API_KEY: ${API_KEY:-lokatani-edge-device-key}
+      UPLOAD_DIR: uploads/images
+      LOG_LEVEL: INFO
+      MIN_CONFIDENCE: 0.60
+    volumes:
+      - backend-uploads:/app/uploads/images
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - lokatani-net
+
+  # ─── React Frontend (Nginx SPA) ────────────────────
+  frontend:
+    build:
+      context: ./frontend-app
+      dockerfile: Dockerfile
+    container_name: lokatani-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - lokatani-net
+
+volumes:
+  pgdata:
+    name: lokatani-pgdata
+  mosquitto-data:
+    name: lokatani-mqtt-data
+  mosquitto-log:
+    name: lokatani-mqtt-log
+  backend-uploads:
+    name: lokatani-uploads
+
+networks:
+  lokatani-net:
+    name: lokatani-network
+    driver: bridge
