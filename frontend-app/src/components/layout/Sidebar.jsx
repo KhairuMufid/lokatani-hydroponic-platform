@@ -35,7 +35,7 @@ export default function Sidebar() {
         </div>
         {!collapsed && (
           <div className="animate-fade-in">
-            <h1 className="text-base font-bold text-gray-900 dark:text-white tracking-tight">Lokatani</h1>
+            <h1 className="text-base font-bold text-gray-900 dark:text-white tracking-tight">HydroTect</h1>
             <p className="text-[10px] text-gray-500 dark:text-gray-500 font-medium tracking-wide uppercase">
               Smart Hydroponics
             </p>

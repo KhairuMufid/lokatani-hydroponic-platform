@@ -154,7 +154,7 @@ export default function Login() {
 
             <h1 className="text-3xl font-extrabold tracking-tight mb-2 flex items-center justify-center gap-2
                            text-slate-800 dark:text-white">
-              Lokatani
+              HydroTect
               <ShieldCheck className="w-6 h-6 text-emerald-500 dark:text-emerald-400" />
             </h1>
             <p className="text-sm font-semibold tracking-wide uppercase
