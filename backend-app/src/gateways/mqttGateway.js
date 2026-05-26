@@ -15,6 +15,7 @@ import env from '../config/env.js';
 import { handleDetection } from '../controllers/detectionController.js';
 import * as alertController from '../controllers/alertController.js';
 import * as dssController from '../controllers/dssController.js';
+import * as sessionController from '../services/sessionManager.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -28,6 +29,8 @@ export function initMqttGateway(client) {
   client.on('connect', () => {
     const topicsToSubscribe = [
       TOPICS.DETECT_UP,
+      TOPICS.SESSION_START,
+      TOPICS.SESSION_END,
       TOPICS.ALERTS_REQUEST,
       TOPICS.DSS_REQUEST,
     ];
@@ -101,6 +104,39 @@ export function initMqttGateway(client) {
               JSON.stringify({ action: 'new_alert', data: result.alert }),
               { qos: 1 },  // QoS 1 for alerts — at least once delivery
             );
+          }
+          break;
+        }
+
+        // ── Session Lifecycle ──
+        case TOPICS.SESSION_START: {
+          const { api_key: sessionApiKey, ...sessionData } = payload;
+          if (!sessionApiKey || sessionApiKey !== env.API_KEY) {
+            logger.warn('[MQTT] Unauthorized session start attempt');
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: false, error: 'Unauthorized' }), { qos: 0 });
+            return;
+          }
+          try {
+            const result = await sessionController.startSession(sessionData.protokol || 'MQTT');
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: true, action: 'session_started', data: result }), { qos: 1 });
+          } catch (err) {
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: false, error: err.message }), { qos: 0 });
+          }
+          break;
+        }
+
+        case TOPICS.SESSION_END: {
+          const { api_key: endApiKey, ...endData } = payload;
+          if (!endApiKey || endApiKey !== env.API_KEY) {
+            logger.warn('[MQTT] Unauthorized session end attempt');
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: false, error: 'Unauthorized' }), { qos: 0 });
+            return;
+          }
+          try {
+            const result = await sessionController.endSession(endData.session_id);
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: true, action: 'session_ended', data: result }), { qos: 1 });
+          } catch (err) {
+            client.publish(TOPICS.SESSION_ACK, JSON.stringify({ success: false, error: err.message }), { qos: 0 });
           }
           break;
         }

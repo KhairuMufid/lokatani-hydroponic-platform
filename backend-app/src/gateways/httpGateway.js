@@ -15,6 +15,7 @@ import * as dssController from '../controllers/dssController.js';
 import * as telemetryController from '../controllers/telemetryController.js';
 import * as dashboardController from '../controllers/dashboardController.js';
 import * as authController from '../controllers/authController.js';
+import * as sessionController from '../services/sessionManager.js';
 import { apiKeyAuth, jwtAuth } from '../middleware/authMiddleware.js';
 
 const router = Router();
@@ -47,6 +48,34 @@ router.post('/api/detect', apiKeyAuth, async (req, res) => {
   const result = await handleDetection(req.body, 'HTTP');
   const status = result.success ? 200 : (result.statusCode || 500);
   res.status(status).json(result);
+});
+
+/**
+ * POST /api/session/start
+ * Start a new scan session (Edge Device → Server).
+ */
+router.post('/api/session/start', apiKeyAuth, async (req, res) => {
+  try {
+    const result = await sessionController.startSession(req.body.protokol || 'HTTP');
+    res.json({ success: true, data: result });
+  } catch (err) {
+    const status = err.statusCode || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/session/end
+ * End an active scan session (Edge Device → Server).
+ */
+router.post('/api/session/end', apiKeyAuth, async (req, res) => {
+  try {
+    const result = await sessionController.endSession(req.body.session_id);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    const status = err.statusCode || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
 });
 
 /**

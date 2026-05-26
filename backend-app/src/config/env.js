@@ -43,7 +43,7 @@ const env = Object.freeze({
 
   // Deduplication (Centroid Tracking)
   DEDUP_DISTANCE_THRESHOLD: parseFloat(process.env.DEDUP_DISTANCE_THRESHOLD || '60'),  // max Euclidean px
-  DEDUP_TEMPORAL_WINDOW:    parseInt(process.env.DEDUP_TEMPORAL_WINDOW || '45', 10),    // max frames
+  DEDUP_TEMPORAL_WINDOW:    parseInt(process.env.DEDUP_TEMPORAL_WINDOW || '15', 10),    // max scan points
   DEDUP_PER_FRAME_DRIFT:    parseFloat(process.env.DEDUP_PER_FRAME_DRIFT || '1.5'),    // px/frame camera shift
 
   // Confidence Gate

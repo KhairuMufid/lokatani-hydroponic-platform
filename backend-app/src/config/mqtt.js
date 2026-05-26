@@ -18,6 +18,10 @@ export const TOPICS = Object.freeze({
   DETECT_UP:       'lokatani/detect/up',
   // Response (Server → Edge / Frontend)
   DETECT_DOWN:     'lokatani/detect/down',
+  // Session lifecycle (Edge ↔ Server)
+  SESSION_START:   'lokatani/session/start',
+  SESSION_END:     'lokatani/session/end',
+  SESSION_ACK:     'lokatani/session/ack',
   // Alert system
   ALERTS_REQUEST:  'lokatani/alerts/request',
   ALERTS_RESPONSE: 'lokatani/alerts/response',

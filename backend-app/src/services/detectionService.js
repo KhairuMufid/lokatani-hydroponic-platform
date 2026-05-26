@@ -2,16 +2,14 @@
  * Detection Service
  *
  * Core business logic for the pest detection ingestion pipeline.
- * Orchestrates: validation → confidence gate → session → dedup →
+ * Orchestrates: validation → session check → confidence gate → dedup →
  *               conditional image save → pest lookup → DB writes → alert eval.
  *
  * PIPELINE STAGES:
+ *   0. Session Validation: REQUIRE explicit active session (no auto-create)
  *   1. Confidence Gate: Filter detections below MIN_CONFIDENCE threshold
- *   2. Session Manager: Group frames into scan sessions via gap detection
- *   3. Centroid Dedup: Euclidean distance tracking to eliminate double-counting
- *   4. Conditional Persist: Only save to disk/DB if unique pests remain
- *
- * This is the HEART of the QoS measurement system.
+ *   2. Centroid Dedup: Euclidean distance tracking to eliminate double-counting
+ *   3. Conditional Persist: Only save to disk/DB if unique pests remain
  *
  * @module services/detectionService
  */
@@ -44,13 +42,9 @@ sessionManager.onComplete(async (session) => {
 
 /**
  * Group raw DSS rows into a pest-keyed structure for the frontend.
- *
- * @param {Array} dssRows - Raw JOIN rows from pestRepo
- * @returns {Array} Grouped structure: [{ hama_id, nama_hama, penanganan: [...] }]
  */
 function groupDssByPest(dssRows) {
   const map = new Map();
-
   for (const row of dssRows) {
     if (!map.has(row.hama_id)) {
       map.set(row.hama_id, {
@@ -59,8 +53,6 @@ function groupDssByPest(dssRows) {
         penanganan: [],
       });
     }
-
-    // Only add if penanganan data exists (LEFT JOIN may produce nulls)
     if (row.penanganan_id) {
       map.get(row.hama_id).penanganan.push({
         id: row.penanganan_id,
@@ -71,7 +63,6 @@ function groupDssByPest(dssRows) {
       });
     }
   }
-
   return [...map.values()];
 }
 
@@ -79,13 +70,12 @@ function groupDssByPest(dssRows) {
  * Process an incoming detection payload.
  *
  * PIPELINE:
+ *   0. Validate payload + REQUIRE scan_session_id (explicit session)
  *   1. Capture receive time (QoS)
- *   2. Validate payload
- *   3. Confidence gate (filter low-quality detections)
- *   4. Session management (get or create scan session)
- *   5. Centroid dedup (eliminate double-counting from moving camera)
- *   6. BRANCH A (no unique pests) → PASSTHROUGH (no disk, no DB)
- *   7. BRANCH B (has unique pests) → FULL PIPELINE (save, persist, alert, DSS)
+ *   2. Confidence gate (filter low-quality detections)
+ *   3. Centroid dedup (eliminate double-counting across scan points)
+ *   4. BRANCH A (no unique pests) → PASSTHROUGH
+ *   5. BRANCH B (has unique pests) → FULL PIPELINE
  *
  * @param {Object} payload  - JSON payload from edge device
  * @param {string} protokol - 'HTTP' | 'WS' | 'MQTT'
@@ -102,46 +92,57 @@ export async function processDetection(payload, protokol) {
     throw err;
   }
 
+  // ─── STAGE 0: Explicit Session Validation ───────────
+  // The backend REQUIRES an active session. No auto-creation.
+  const scanSessionId = payload.scan_session_id;
+  if (!scanSessionId) {
+    const err = new Error(
+      'Missing required field: scan_session_id. ' +
+      'Send a start_session signal before transmitting telemetry.'
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const sessionCheck = await sessionManager.validateSession(scanSessionId);
+  if (!sessionCheck) {
+    logger.warn(
+      `[DETECT] ⚠️ REJECTED telemetry for session #${scanSessionId} — ` +
+      `no active session found. Possible ESP32/RPi desync.`
+    );
+    const err = new Error(
+      `Session #${scanSessionId} is not active. ` +
+      `Ensure start_session was called and the session has not been ended.`
+    );
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // Advance frame counter for this session
+  const frameIndex = await sessionManager.advanceFrame(scanSessionId);
+
   const waktuKirim = new Date(payload.timestamp);
   const rawDetections = Array.isArray(payload.detections) ? payload.detections : [];
-
-  // Compute latency for all frames (needed for QoS measurement)
   const latencyMs = calculateLatencyMs(waktuKirim, waktuTerima);
 
-  // ───────────────────────────────────────────────────────
-  // STAGE 1: Confidence Gate
-  // Filter out low-confidence detections (motion blur artifacts)
-  // ───────────────────────────────────────────────────────
+  // ─── STAGE 1: Confidence Gate ──────────────────────
   const minConfidence = payload.min_confidence ?? env.MIN_CONFIDENCE;
   const filteredDetections = rawDetections.filter(
     (d) => d.confidence >= minConfidence
   );
 
-  // ───────────────────────────────────────────────────────
-  // STAGE 2: Session Management
-  // Get or create a scan session (gap-based boundary detection)
-  // ───────────────────────────────────────────────────────
-  const { sessionId, frameIndex } = await sessionManager.getOrCreateSession(protokol);
-
-  // ───────────────────────────────────────────────────────
-  // STAGE 3: Centroid Dedup
-  // Eliminate double-counting from the sliding camera
-  // ───────────────────────────────────────────────────────
+  // ─── STAGE 2: Centroid Dedup ───────────────────────
   const { uniqueDetections, newUniqueCount, rawCount } = processDedup(
-    sessionId,
+    scanSessionId,
     frameIndex,
     filteredDetections
   );
 
-  // Update session counters (total_frames + raw + unique)
-  await sessionManager.updateSessionCounters(sessionId, rawCount, newUniqueCount);
+  // Update session counters
+  await sessionManager.updateSessionCounters(scanSessionId, rawCount, newUniqueCount);
 
-  // ═══════════════════════════════════════════════════════
-  // BRANCH A: No unique pests in this frame → PASSTHROUGH
-  // Skip disk I/O and DB writes entirely. Just broadcast.
-  // ═══════════════════════════════════════════════════════
+  // ═══ BRANCH A: No unique pests → PASSTHROUGH ═══
   if (uniqueDetections.length === 0) {
-    // Populate DSS from cache for all currently visible pests
     const activePestNames = [...new Set(filteredDetections.map(d => d.class_name).filter(Boolean))];
     const cachedDssData = [];
     for (const pestName of activePestNames) {
@@ -152,7 +153,7 @@ export async function processDetection(payload, protokol) {
 
     const result = {
       success: true,
-      log_id: `passthrough-${sessionId}-${frameIndex}`,
+      log_id: `passthrough-${scanSessionId}-${frameIndex}`,
       latency_ms: Math.round(latencyMs * 100) / 100,
       image_base64: payload.image_base64,
       image_path: null,
@@ -163,7 +164,7 @@ export async function processDetection(payload, protokol) {
       alert: null,
       dss: cachedDssData,
       created_at: waktuTerima.toISOString(),
-      scan_session_id: sessionId,
+      scan_session_id: scanSessionId,
       frame_index: frameIndex,
       dedup: {
         raw: rawCount,
@@ -172,61 +173,49 @@ export async function processDetection(payload, protokol) {
       },
     };
 
-    // Cache for HTTP polling
     setLatestFrame(result);
 
     logger.debug(
-      `[DETECT] ${protokol} | S#${sessionId} F${frameIndex} | PASSTHROUGH | ` +
+      `[DETECT] ${protokol} | S#${scanSessionId} F${frameIndex} | PASSTHROUGH | ` +
       `${result.latency_ms}ms | ${rawDetections.length}→${filteredDetections.length}→0 unique`
     );
 
     return result;
   }
 
-  // ═══════════════════════════════════════════════════════
-  // BRANCH B: Has unique new pests → FULL PIPELINE
-  // Save image, persist to DB, evaluate alerts, fetch DSS.
-  // ═══════════════════════════════════════════════════════
-
-  // Extract unique pest class names from unique detections
+  // ═══ BRANCH B: Has unique pests → FULL PIPELINE ═══
   const classNames = [...new Set(
     uniqueDetections.map(d => d.class_name).filter(Boolean)
   )];
 
-  // STAGE 4: Parallel disk I/O + DB lookup (independent)
   const [imagePath, pestRecords] = await Promise.all([
     saveBase64Image(payload.image_base64),
     pestRepo.lookupByNames(classNames),
   ]);
 
-  // Build pest name → id lookup map
   const pestMap = new Map(pestRecords.map(p => [p.nama_hama, p.id]));
 
-  // Enrich detections with resolved hama_id
   const enrichedDetails = uniqueDetections.map(d => ({
     hama_id: pestMap.get(d.class_name) || null,
     confidence: d.confidence || 0,
     bbox: d.bbox || [],
   }));
 
-  // STAGE 5: Insert log with session reference
   const logRow = await detectionRepo.insertLog({
     protokol,
     waktuKirim,
     waktuTerima,
     imagePath,
     totalDetections: uniqueDetections.length,
-    metadata: { scan_session_id: sessionId, frame_index: frameIndex },
-    scanSessionId: sessionId,
+    metadata: { scan_session_id: scanSessionId, frame_index: frameIndex },
+    scanSessionId: scanSessionId,
   });
 
-  // STAGE 6: Parallel detail insert + alert evaluation
   const [detailRows, alertRow] = await Promise.all([
     detectionRepo.insertDetails(logRow.id, enrichedDetails),
     alertService.evaluateAndCreate(logRow.id, uniqueDetections, pestMap),
   ]);
 
-  // STAGE 7: Fetch DSS for newly detected unique pests
   const uniquePestIds = [...new Set(
     enrichedDetails.map(d => d.hama_id).filter(Boolean)
   )];
@@ -234,7 +223,6 @@ export async function processDetection(payload, protokol) {
   if (uniquePestIds.length > 0) {
     const dssRows = await pestRepo.getMitigationsByPestIds(uniquePestIds);
     const grouped = groupDssByPest(dssRows);
-    // Update global cache with freshly fetched DSS
     for (const dss of grouped) {
       if (dss.nama_hama) {
         globalDssCache.set(dss.nama_hama, dss);
@@ -242,7 +230,6 @@ export async function processDetection(payload, protokol) {
     }
   }
 
-  // Compile final DSS for ALL pests currently in frame
   const activePestNames = [...new Set(filteredDetections.map(d => d.class_name).filter(Boolean))];
   const finalDssData = [];
   for (const pestName of activePestNames) {
@@ -251,7 +238,6 @@ export async function processDetection(payload, protokol) {
     }
   }
 
-  // --- Build response ---
   const result = {
     success: true,
     log_id: logRow.id,
@@ -259,13 +245,13 @@ export async function processDetection(payload, protokol) {
     image_base64: payload.image_base64,
     image_path: imagePath,
     total_detections: uniqueDetections.length,
-    detections: filteredDetections,  // Echo all filtered for bounding boxes
+    detections: filteredDetections,
     unique_pests: newUniqueCount,
     details_inserted: detailRows.length,
     alert: alertRow || null,
     dss: finalDssData,
     created_at: logRow.created_at,
-    scan_session_id: sessionId,
+    scan_session_id: scanSessionId,
     frame_index: frameIndex,
     dedup: {
       raw: rawCount,
@@ -274,11 +260,10 @@ export async function processDetection(payload, protokol) {
     },
   };
 
-  // Cache for HTTP polling
   setLatestFrame(result);
 
   logger.debug(
-    `[DETECT] ${protokol} | S#${sessionId} F${frameIndex} | log #${logRow.id} | ` +
+    `[DETECT] ${protokol} | S#${scanSessionId} F${frameIndex} | log #${logRow.id} | ` +
     `${logRow.latency_ms}ms | ${rawDetections.length}→${filteredDetections.length}→${newUniqueCount} unique | ` +
     `alert: ${alertRow ? alertRow.severity : 'none'}`
   );

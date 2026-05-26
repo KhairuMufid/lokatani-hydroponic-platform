@@ -25,7 +25,7 @@ import * as alertController from '../controllers/alertController.js';
 import * as dssController from '../controllers/dssController.js';
 import * as telemetryController from '../controllers/telemetryController.js';
 import * as dashboardController from '../controllers/dashboardController.js';
-import * as sessionManager from '../services/sessionManager.js';
+import * as sessionController from '../services/sessionManager.js';
 import logger from '../utils/logger.js';
 
 /** @type {Set<import('ws').WebSocket>} All connected WS clients */
@@ -120,6 +120,23 @@ async function routeMessage(ws, msg) {
       break;
     }
 
+    // ── Explicit Session Lifecycle ──
+    case 'start_session': {
+      const result = await sessionController.startSession(data.protokol || 'WS');
+      respond(ws, 'start_session_result', result);
+      break;
+    }
+
+    case 'end_session': {
+      try {
+        const result = await sessionController.endSession(data.session_id);
+        respond(ws, 'end_session_result', result);
+      } catch (err) {
+        respond(ws, 'end_session_result', { error: err.message }, false);
+      }
+      break;
+    }
+
     // ── Live Frame Subscription ──
     case 'subscribe_live': {
       liveSubscribers.add(ws);
@@ -207,7 +224,7 @@ import { verifyJWT } from '../utils/jwtHelper.js';
 
 export function initWsGateway(wss) {
   // Broadcast session completion events to all WS clients
-  sessionManager.onComplete((session) => {
+  sessionController.onComplete((session) => {
     broadcast({ action: 'session_completed', data: session, success: true });
   });
 
@@ -259,7 +276,7 @@ export function initWsGateway(wss) {
       }
 
       // Strict route protection
-      if (msg.action === 'detect' && !ws.isMachine) {
+      if (['detect', 'start_session', 'end_session'].includes(msg.action) && !ws.isMachine) {
         respond(ws, 'error', { message: 'Forbidden: Only edge devices can send telemetry' }, false);
         return;
       }

@@ -1,16 +1,19 @@
 /**
- * Mock IoT Node — QoS Stress-Test Client
+ * Mock IoT Node — QoS Stress-Test Client (Explicit Session Protocol)
  *
- * Simulates a Raspberry Pi 4 edge device firing high-frequency JSON payloads
- * containing Base64 image data to the backend via HTTP, WebSocket, or MQTT.
+ * Simulates a Raspberry Pi 4 edge device using the new explicit session
+ * lifecycle: START → SCAN POINTS → END → GAP → repeat.
  *
  * Usage:
- *   node src/tests/mock-iot.js <PROTOCOL> <FPS> <DURATION_SECONDS>
+ *   node src/tests/mock-iot.js <PROTOCOL> <SCAN_POINTS> <SESSIONS>
  *
  * Examples:
- *   node src/tests/mock-iot.js HTTP 10 30    # 10 FPS for 30 seconds via HTTP
- *   node src/tests/mock-iot.js WS   15 60    # 15 FPS for 60 seconds via WebSocket
- *   node src/tests/mock-iot.js MQTT 10 30    # 10 FPS for 30 seconds via MQTT
+ *   node src/tests/mock-iot.js HTTP 5 3     # 5 scan points per session, 3 sessions via HTTP
+ *   node src/tests/mock-iot.js WS   8 2     # 8 scan points, 2 sessions via WebSocket
+ *   node src/tests/mock-iot.js MQTT 5 3     # 5 scan points, 3 sessions via MQTT
+ *
+ * Each scan point simulates the slider stopping, running YOLO burst,
+ * and sending the single best frame to the backend.
  *
  * @module tests/mock-iot
  */
@@ -23,10 +26,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ─── Generate valid 1x1 transparent PNG Base64 Payload as fallback ───
+// ─── Load Real Image ────────────────────────────────
 const DUMMY_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
-// Read real sample image
 let IMAGE_BASE64 = DUMMY_BASE64;
 try {
   const imagePath = path.join(__dirname, 'sample.jpg');
@@ -38,95 +40,53 @@ try {
 }
 
 // ─── Parse CLI Arguments ─────────────────────────────
-const [, , protocol, fpsStr, durationStr] = process.argv;
+const [, , protocol, scanPointsStr, sessionsStr] = process.argv;
 
-if (!protocol || !fpsStr || !durationStr) {
-  console.error('Usage: node src/tests/mock-iot.js <HTTP|WS|MQTT> <FPS> <DURATION_SECONDS>');
+if (!protocol || !scanPointsStr || !sessionsStr) {
+  console.error('Usage: node src/tests/mock-iot.js <HTTP|WS|MQTT> <SCAN_POINTS> <SESSIONS>');
+  console.error('  SCAN_POINTS: Number of scan points per session (slider stop positions)');
+  console.error('  SESSIONS:    Number of complete scan sessions to simulate');
   process.exit(1);
 }
 
 const API_KEY = process.env.API_KEY || 'lokatani-edge-device-key';
-
 const PROTOCOL = protocol.toUpperCase();
-const FPS = parseInt(fpsStr, 10);
-const DURATION = parseInt(durationStr, 10);
-const INTERVAL_MS = Math.floor(1000 / FPS);
-const TOTAL_EXPECTED = FPS * DURATION;
+const SCAN_POINTS = parseInt(scanPointsStr, 10);
+const SESSIONS = parseInt(sessionsStr, 10);
+const SCAN_INTERVAL_MS = 2000;  // 2s between scan points (simulates 10s burst, best frame)
+const SESSION_GAP_MS = 3000;    // 3s gap between sessions
 
 if (!['HTTP', 'WS', 'MQTT'].includes(PROTOCOL)) {
   console.error(`Invalid protocol: "${PROTOCOL}". Use HTTP, WS, or MQTT.`);
   process.exit(1);
 }
 
+// ─── Simulated Pest Detections ───────────────────────
+const PEST_CLASSES = ['kutu_daun', 'ulat_grayak', 'kutu_kebul', 'thrips', 'tungau', 'belalang'];
 
-// Simulated pest detections (Stateful for Centroid Tracking)
-const PEST_CLASSES = ['kutu_daun', 'ulat_grayak', 'kutu_kebul', 'thrips', 'tungau', 'belalang', 'winged_aphid', 'kutu_putih'];
-
-let simulatedBugs = [];
-let secondWaveSpawned = false;
-
-function spawnBugs(append = false) {
-  const count = 3 + Math.floor(Math.random() * 4); // 3-6 bugs per wave
-  if (!append) {
-    simulatedBugs = [];
-    secondWaveSpawned = false;
-  }
-  
-  for (let i = 0; i < count; i++) {
-    simulatedBugs.push({
-      class_name: PEST_CLASSES[Math.floor(Math.random() * PEST_CLASSES.length)],
-      confidence: +(0.4 + Math.random() * 0.5).toFixed(3),
-      cx: 800 + Math.floor(Math.random() * 800), // Start immediately visible on the right half of the screen
-      cy: 100 + Math.floor(Math.random() * 700),  // Stay within 900px height
-      w: 80 + Math.floor(Math.random() * 40),
-      h: 80 + Math.floor(Math.random() * 40),
-      active: true,
-    });
-  }
-}
-
-function updateAndGetDetections() {
+function generateDetections() {
+  const count = 1 + Math.floor(Math.random() * 4); // 1-4 detections per scan point
   const detections = [];
-  for (const bug of simulatedBugs) {
-    if (!bug.active) continue;
-
-    // Shift X by ~2.2 pixels per frame (camera moving right, bugs move left in frame)
-    bug.cx -= 2.2;
-
-    if (bug.cx < -100) {
-      bug.active = false;
-      continue;
-    }
-
-    // If within 1600x900 FOV, generate a detection
-    if (bug.cx > 0 && bug.cx < 1600) {
-      // Small random jitter to simulate YOLO bounding box instability
-      const jitterX = (Math.random() - 0.5) * 4;
-      const jitterY = (Math.random() - 0.5) * 4;
-
-      detections.push({
-        class_name: bug.class_name,
-        confidence: bug.confidence,
-        bbox: [
-          Math.max(0, bug.cx - bug.w / 2 + jitterX), // x
-          Math.max(0, bug.cy - bug.h / 2 + jitterY), // y
-          bug.w, // width
-          bug.h, // height
-        ],
-      });
-    }
+  for (let i = 0; i < count; i++) {
+    const cx = 100 + Math.floor(Math.random() * 1400);
+    const cy = 100 + Math.floor(Math.random() * 700);
+    const w = 80 + Math.floor(Math.random() * 40);
+    const h = 80 + Math.floor(Math.random() * 40);
+    detections.push({
+      class_name: PEST_CLASSES[Math.floor(Math.random() * PEST_CLASSES.length)],
+      confidence: +(0.55 + Math.random() * 0.40).toFixed(3),  // 0.55–0.95 (optimal frame)
+      bbox: [Math.max(0, cx - w / 2), Math.max(0, cy - h / 2), w, h],
+    });
   }
   return detections;
 }
 
-// Ensure bugs exist at start
-spawnBugs();
-
-function buildPayload() {
+function buildPayload(sessionId) {
   return {
     timestamp: new Date().toISOString(),
     image_base64: IMAGE_BASE64,
-    detections: updateAndGetDetections(),
+    detections: generateDetections(),
+    scan_session_id: sessionId,
   };
 }
 
@@ -137,23 +97,23 @@ let failed = 0;
 const latencies = [];
 const startTime = Date.now();
 
-function printProgress() {
+function printProgress(sessionNum, scanPoint) {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   process.stdout.write(
-    `\r⏱ ${elapsed}s | Sent: ${sent}/${TOTAL_EXPECTED} | ✅ ${success} | ❌ ${failed}`
+    `\r⏱ ${elapsed}s | Session ${sessionNum}/${SESSIONS} | Point ${scanPoint}/${SCAN_POINTS} | ✅ ${success} | ❌ ${failed}`
   );
 }
 
 function printSummary() {
   console.log('\n\n════════════════════════════════════════');
-  console.log('       QoS STRESS TEST — SUMMARY');
+  console.log('     QoS STRESS TEST — SUMMARY');
   console.log('════════════════════════════════════════');
-  console.log(`Protocol:     ${PROTOCOL}`);
-  console.log(`Target FPS:   ${FPS}`);
-  console.log(`Duration:     ${DURATION}s`);
-  console.log(`Sent:         ${sent}`);
-  console.log(`Success:      ${success}`);
-  console.log(`Failed:       ${failed}`);
+  console.log(`Protocol:       ${PROTOCOL}`);
+  console.log(`Sessions:       ${SESSIONS}`);
+  console.log(`Scan Points:    ${SCAN_POINTS} per session`);
+  console.log(`Total Frames:   ${sent}`);
+  console.log(`Success:        ${success}`);
+  console.log(`Failed:         ${failed}`);
 
   if (latencies.length > 0) {
     latencies.sort((a, b) => a - b);
@@ -171,117 +131,179 @@ function printSummary() {
   console.log('════════════════════════════════════════\n');
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ─── HTTP Client ─────────────────────────────────────
-async function sendHTTP() {
+async function runHTTP() {
   const PORT = process.env.PORT_HTTP || 3000;
-  const url = `http://localhost:${PORT}/api/detect`;
+  const BASE = `http://localhost:${PORT}`;
+  const headers = { 'Content-Type': 'application/json', 'x-api-key': API_KEY };
 
-  const intervalId = setInterval(async () => {
-    const elapsedSec = (Date.now() - startTime) / 1000;
-    const cycleTime = elapsedSec % 36; // 30s traverse + 6s gap
-
-    if (cycleTime > 30) {
-      // GAP PERIOD: simulate slider pausing at end of track.
-      // Triggers the backend SessionManager's 5s timeout.
-      simulatedBugs = []; // ALWAYS reset to avoid empty sessions
-      secondWaveSpawned = false;
-      return;
-    } else if (simulatedBugs.length === 0) {
-      spawnBugs();
-    } else if (cycleTime > 15 && !secondWaveSpawned) {
-      // SECOND WAVE: prove cumulative counting works mid-session
-      secondWaveSpawned = true;
-      spawnBugs(true);
+  for (let s = 1; s <= SESSIONS; s++) {
+    // 1. START SESSION
+    console.log(`\n🟢 [HTTP] Starting session ${s}/${SESSIONS}...`);
+    let sessionId;
+    try {
+      const res = await fetch(`${BASE}/api/session/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ protokol: 'HTTP' }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      sessionId = json.data.sessionId;
+      console.log(`   Session #${sessionId} started`);
+    } catch (err) {
+      console.error(`   ❌ Failed to start session: ${err.message}`);
+      continue;
     }
 
-    const payload = buildPayload();
-    const sendTime = Date.now();
-    sent++;
+    // 2. SCAN POINTS
+    for (let p = 1; p <= SCAN_POINTS; p++) {
+      const payload = buildPayload(sessionId);
+      const sendTime = Date.now();
+      sent++;
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-api-key': API_KEY 
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      try {
+        const res = await fetch(`${BASE}/api/detect`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
 
-      if (data.success) {
-        success++;
-        latencies.push(Date.now() - sendTime);
-      } else {
+        if (data.success) {
+          success++;
+          latencies.push(Date.now() - sendTime);
+        } else {
+          failed++;
+        }
+      } catch {
         failed++;
       }
-    } catch {
-      failed++;
+
+      printProgress(s, p);
+      if (p < SCAN_POINTS) await sleep(SCAN_INTERVAL_MS);
     }
 
-    printProgress();
-  }, INTERVAL_MS);
+    // 3. END SESSION
+    try {
+      const res = await fetch(`${BASE}/api/session/end`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        console.log(`\n🔴 [HTTP] Session #${sessionId} ended | Frames: ${json.data.total_frames} | Unique: ${json.data.unique_pests}`);
+      }
+    } catch (err) {
+      console.error(`\n   ❌ Failed to end session: ${err.message}`);
+    }
 
-  setTimeout(() => {
-    clearInterval(intervalId);
-    // Wait for in-flight requests
-    setTimeout(() => {
-      printSummary();
-      process.exit(0);
-    }, 2000);
-  }, DURATION * 1000);
+    // 4. GAP
+    if (s < SESSIONS) {
+      console.log(`   ⏸ Gap (${SESSION_GAP_MS / 1000}s)...`);
+      await sleep(SESSION_GAP_MS);
+    }
+  }
+
+  printSummary();
+  process.exit(0);
 }
 
 // ─── WebSocket Client ────────────────────────────────
-async function sendWS() {
+async function runWS() {
   const { default: WebSocket } = await import('ws');
   const PORT = process.env.PORT_WS || 8080;
   const ws = new WebSocket(`ws://localhost:${PORT}?api_key=${API_KEY}`);
 
-  ws.on('open', () => {
-    console.log(`[WS] Connected to ws://localhost:${PORT}`);
+  // Response handlers (promise-based)
+  const pendingResponses = new Map();
+  let responseIdCounter = 0;
 
-    const intervalId = setInterval(() => {
-      const elapsedSec = (Date.now() - startTime) / 1000;
-      const cycleTime = elapsedSec % 36;
-      if (cycleTime > 30) {
-        if (simulatedBugs.some(b => b.active)) simulatedBugs = [];
-        return;
-      } else if (simulatedBugs.length === 0) {
-        spawnBugs();
-      }
-
-      const payload = buildPayload();
-      sent++;
-
-      ws.send(JSON.stringify({ action: 'detect', data: payload }));
-      printProgress();
-    }, INTERVAL_MS);
-
-    setTimeout(() => {
-      clearInterval(intervalId);
-      setTimeout(() => {
-        ws.close();
-        printSummary();
-        process.exit(0);
-      }, 2000);
-    }, DURATION * 1000);
-  });
+  function waitForAction(action, timeoutMs = 10000) {
+    const id = responseIdCounter++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingResponses.delete(action);
+        reject(new Error(`Timeout waiting for ${action}`));
+      }, timeoutMs);
+      pendingResponses.set(action, { resolve, timer });
+    });
+  }
 
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+      const handler = pendingResponses.get(msg.action);
+      if (handler) {
+        clearTimeout(handler.timer);
+        pendingResponses.delete(msg.action);
+        handler.resolve(msg);
+      }
+      // Track detect results
       if (msg.action === 'detect_result' && msg.success) {
         success++;
-        if (msg.data && msg.data.latency_ms != null) {
-          latencies.push(msg.data.latency_ms);
-        }
+        if (msg.data?.latency_ms != null) latencies.push(msg.data.latency_ms);
       } else if (msg.action === 'detect_result') {
         failed++;
       }
-    } catch {
-      // ignore parse errors on response
+    } catch { /* ignore */ }
+  });
+
+  ws.on('open', async () => {
+    console.log(`[WS] Connected to ws://localhost:${PORT}`);
+
+    for (let s = 1; s <= SESSIONS; s++) {
+      // 1. START SESSION
+      console.log(`\n🟢 [WS] Starting session ${s}/${SESSIONS}...`);
+      ws.send(JSON.stringify({ action: 'start_session', data: { protokol: 'WS' } }));
+      let sessionId;
+      try {
+        const resp = await waitForAction('start_session_result');
+        sessionId = resp.data.sessionId;
+        console.log(`   Session #${sessionId} started`);
+      } catch (err) {
+        console.error(`   ❌ ${err.message}`);
+        continue;
+      }
+
+      // 2. SCAN POINTS
+      for (let p = 1; p <= SCAN_POINTS; p++) {
+        const payload = buildPayload(sessionId);
+        sent++;
+        ws.send(JSON.stringify({ action: 'detect', data: payload }));
+        printProgress(s, p);
+        if (p < SCAN_POINTS) await sleep(SCAN_INTERVAL_MS);
+      }
+
+      // Wait briefly for last detect_result
+      await sleep(500);
+
+      // 3. END SESSION
+      ws.send(JSON.stringify({ action: 'end_session', data: { session_id: sessionId } }));
+      try {
+        const resp = await waitForAction('end_session_result');
+        if (resp.success) {
+          console.log(`\n🔴 [WS] Session #${sessionId} ended | Frames: ${resp.data.total_frames} | Unique: ${resp.data.unique_pests}`);
+        }
+      } catch (err) {
+        console.error(`\n   ❌ ${err.message}`);
+      }
+
+      // 4. GAP
+      if (s < SESSIONS) {
+        console.log(`   ⏸ Gap (${SESSION_GAP_MS / 1000}s)...`);
+        await sleep(SESSION_GAP_MS);
+      }
     }
+
+    ws.close();
+    printSummary();
+    process.exit(0);
   });
 
   ws.on('error', (err) => {
@@ -291,7 +313,7 @@ async function sendWS() {
 }
 
 // ─── MQTT Client ─────────────────────────────────────
-async function sendMQTT() {
+async function runMQTT() {
   const { default: mqtt } = await import('mqtt');
   const BROKER = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
   const client = mqtt.connect(BROKER, {
@@ -299,55 +321,104 @@ async function sendMQTT() {
     clean: true,
   });
 
-  client.on('connect', () => {
+  // Promise-based message waiters
+  const pendingResponses = new Map();
+
+  function waitForTopic(topic, actionFilter, timeoutMs = 10000) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingResponses.delete(topic);
+        reject(new Error(`Timeout waiting for ${topic}`));
+      }, timeoutMs);
+      pendingResponses.set(topic + (actionFilter || ''), { resolve, timer });
+    });
+  }
+
+  client.on('connect', async () => {
     console.log(`[MQTT] Connected to ${BROKER}`);
 
-    // Subscribe to response topic
-    client.subscribe('lokatani/detect/down', { qos: 0 });
+    // Subscribe to response topics
+    client.subscribe(['lokatani/detect/down', 'lokatani/session/ack'], { qos: 0 });
 
-    const intervalId = setInterval(() => {
-      const elapsedSec = (Date.now() - startTime) / 1000;
-      const cycleTime = elapsedSec % 36;
-      if (cycleTime > 30) {
-        if (simulatedBugs.some(b => b.active)) simulatedBugs = [];
-        return;
-      } else if (simulatedBugs.length === 0) {
-        spawnBugs();
+    for (let s = 1; s <= SESSIONS; s++) {
+      // 1. START SESSION
+      console.log(`\n🟢 [MQTT] Starting session ${s}/${SESSIONS}...`);
+      const startPayload = { api_key: API_KEY, protokol: 'MQTT' };
+      const startWaiter = waitForTopic('lokatani/session/ack', 'session_started');
+      client.publish('lokatani/session/start', JSON.stringify(startPayload), { qos: 1 });
+
+      let sessionId;
+      try {
+        const resp = await startWaiter;
+        sessionId = resp.data.sessionId;
+        console.log(`   Session #${sessionId} started`);
+      } catch (err) {
+        console.error(`   ❌ ${err.message}`);
+        continue;
       }
 
-      const payload = buildPayload();
-      payload.api_key = API_KEY;
-      sent++;
+      // 2. SCAN POINTS
+      for (let p = 1; p <= SCAN_POINTS; p++) {
+        const payload = buildPayload(sessionId);
+        payload.api_key = API_KEY;
+        sent++;
+        client.publish('lokatani/detect/up', JSON.stringify(payload), { qos: 0 });
+        printProgress(s, p);
+        if (p < SCAN_POINTS) await sleep(SCAN_INTERVAL_MS);
+      }
 
-      client.publish('lokatani/detect/up', JSON.stringify(payload), { qos: 0 });
-      printProgress();
-    }, INTERVAL_MS);
+      // Wait for last detect response
+      await sleep(500);
 
-    setTimeout(() => {
-      clearInterval(intervalId);
-      setTimeout(() => {
-        client.end(false, {}, () => {
-          printSummary();
-          process.exit(0);
-        });
-      }, 2000);
-    }, DURATION * 1000);
+      // 3. END SESSION
+      const endPayload = { api_key: API_KEY, session_id: sessionId };
+      const endWaiter = waitForTopic('lokatani/session/ack', 'session_ended');
+      client.publish('lokatani/session/end', JSON.stringify(endPayload), { qos: 1 });
+
+      try {
+        const resp = await endWaiter;
+        console.log(`\n🔴 [MQTT] Session #${sessionId} ended | Frames: ${resp.data.total_frames} | Unique: ${resp.data.unique_pests}`);
+      } catch (err) {
+        console.error(`\n   ❌ ${err.message}`);
+      }
+
+      // 4. GAP
+      if (s < SESSIONS) {
+        console.log(`   ⏸ Gap (${SESSION_GAP_MS / 1000}s)...`);
+        await sleep(SESSION_GAP_MS);
+      }
+    }
+
+    client.end(false, {}, () => {
+      printSummary();
+      process.exit(0);
+    });
   });
 
+  // Route MQTT responses
   client.on('message', (topic, buf) => {
     try {
       const msg = JSON.parse(buf.toString());
-      if (msg.success) {
-        success++;
-        if (msg.latency_ms != null) {
-          latencies.push(msg.latency_ms);
+
+      if (topic === 'lokatani/detect/down') {
+        if (msg.success) {
+          success++;
+          if (msg.latency_ms != null) latencies.push(msg.latency_ms);
+        } else {
+          failed++;
         }
-      } else {
-        failed++;
       }
-    } catch {
-      // ignore parse errors on response
-    }
+
+      if (topic === 'lokatani/session/ack') {
+        const key = topic + (msg.action || '');
+        const handler = pendingResponses.get(key);
+        if (handler) {
+          clearTimeout(handler.timer);
+          pendingResponses.delete(key);
+          handler.resolve(msg);
+        }
+      }
+    } catch { /* ignore */ }
   });
 
   client.on('error', (err) => {
@@ -357,10 +428,10 @@ async function sendMQTT() {
 }
 
 // ─── Main ────────────────────────────────────────────
-console.log(`\n🚀 Mock IoT — ${PROTOCOL} @ ${FPS} FPS for ${DURATION}s (${TOTAL_EXPECTED} frames)\n`);
+console.log(`\n🚀 Mock IoT — ${PROTOCOL} | ${SCAN_POINTS} scan points × ${SESSIONS} sessions\n`);
 
 switch (PROTOCOL) {
-  case 'HTTP': sendHTTP(); break;
-  case 'WS': sendWS(); break;
-  case 'MQTT': sendMQTT(); break;
+  case 'HTTP': runHTTP(); break;
+  case 'WS': runWS(); break;
+  case 'MQTT': runMQTT(); break;
 }
