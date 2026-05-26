@@ -61,11 +61,16 @@ function disconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   if (ws) {
+    // Prevent async events altering connection state after disconnect
     ws.onclose = null;
+    ws.onerror = null;
+    ws.onopen = null;
+    ws.onmessage = null;
     ws.close();
     ws = null;
   }
   onStatusChange?.('disconnected');
+  onStatusChange = null;
 }
 
 function send(action, data = {}) {

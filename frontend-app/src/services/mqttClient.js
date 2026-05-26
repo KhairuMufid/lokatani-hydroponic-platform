@@ -47,10 +47,15 @@ function connect(statusCb) {
 
 function disconnect() {
   if (client) {
+    // Prevent async events altering connection state after disconnect
+    client.removeAllListeners('error');
+    client.removeAllListeners('close');
+    client.removeAllListeners('offline');
     client.end(true);
     client = null;
   }
   onStatusChange?.('disconnected');
+  onStatusChange = null;
 }
 
 function on(topic, callback) {
