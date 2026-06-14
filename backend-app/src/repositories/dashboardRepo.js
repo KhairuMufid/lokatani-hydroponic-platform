@@ -17,10 +17,10 @@ import { query } from '../config/database.js';
 export async function getSummary() {
   const sql = `
     SELECT
-      COUNT(*)::int                     AS total_detections_today,
-      COALESCE(SUM(total_detections), 0)::int AS total_pests_today,
+      COUNT(CASE WHEN is_empty_detection = FALSE THEN 1 END)::int AS total_detections_today,
+      COALESCE(SUM(CASE WHEN is_empty_detection = FALSE THEN total_detections END), 0)::int AS total_pests_today,
       ROUND(AVG(latency_ms)::numeric, 2) AS avg_latency_ms,
-      MAX(created_at)                   AS last_detection_at
+      MAX(CASE WHEN is_empty_detection = FALSE THEN created_at END) AS last_detection_at
     FROM tb_detection_log
     WHERE created_at >= CURRENT_DATE
   `;
@@ -157,6 +157,7 @@ export async function getTrend(days = 7) {
       COALESCE(SUM(total_detections), 0)::int AS pest_count
     FROM tb_detection_log
     WHERE created_at >= CURRENT_DATE - $1 * INTERVAL '1 day'
+      AND is_empty_detection = FALSE
     GROUP BY DATE(created_at), protokol
     ORDER BY date ASC, protokol
   `;
@@ -173,6 +174,7 @@ export async function getLatestDetection() {
     SELECT id, protokol, waktu_kirim, waktu_terima, latency_ms,
            image_path, total_detections, metadata, created_at
     FROM tb_detection_log
+    WHERE is_empty_detection = FALSE
     ORDER BY created_at DESC
     LIMIT 1
   `;

@@ -45,13 +45,18 @@ CREATE TABLE IF NOT EXISTS tb_detection_log (
                       ) STORED,
     image_path        VARCHAR(500),
     total_detections  INT NOT NULL DEFAULT 0,
+    is_empty_detection BOOLEAN NOT NULL DEFAULT FALSE,
     metadata          JSONB DEFAULT '{}',
     created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Migration helper for existing deployments (idempotent)
+ALTER TABLE tb_detection_log ADD COLUMN IF NOT EXISTS is_empty_detection BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_detection_log_protokol      ON tb_detection_log(protokol);
 CREATE INDEX IF NOT EXISTS idx_detection_log_created_at    ON tb_detection_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_detection_log_proto_created ON tb_detection_log(protokol, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_detection_log_empty         ON tb_detection_log(is_empty_detection, protokol, created_at DESC);
 
 -- 3b. Scan Session (groups frames from one slider traversal)
 CREATE TABLE IF NOT EXISTS tb_scan_session (

@@ -22,7 +22,7 @@ import { query } from '../config/database.js';
  * @returns {Promise<Array>}
  */
 export async function findLogs({ protokol, limit = 50, offset = 0, startDate, endDate } = {}) {
-  const conditions = [];
+  const conditions = ['is_empty_detection = FALSE'];
   const params = [];
   let idx = 1;
 
@@ -53,7 +53,7 @@ export async function findLogs({ protokol, limit = 50, offset = 0, startDate, en
  * @returns {Promise<number>}
  */
 export async function countLogs({ protokol, startDate, endDate } = {}) {
-  const conditions = [];
+  const conditions = ['is_empty_detection = FALSE'];
   const params = [];
   let idx = 1;
 

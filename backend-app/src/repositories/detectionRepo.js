@@ -10,7 +10,7 @@
 import { query } from '../config/database.js';
 
 /**
- * Insert a detection log entry. Returns the inserted row with generated id and latency.
+ * Insert a detection log entry (pest detected). Returns the inserted row with generated id and latency.
  *
  * @param {Object} data
  * @param {string} data.protokol      - 'HTTP' | 'WS' | 'MQTT'
@@ -25,8 +25,8 @@ import { query } from '../config/database.js';
 export async function insertLog({ protokol, waktuKirim, waktuTerima, imagePath, totalDetections, metadata, scanSessionId }) {
   const sql = `
     INSERT INTO tb_detection_log
-      (protokol, waktu_kirim, waktu_terima, image_path, total_detections, metadata, scan_session_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+      (protokol, waktu_kirim, waktu_terima, image_path, total_detections, is_empty_detection, metadata, scan_session_id)
+    VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7)
     RETURNING id, latency_ms, created_at
   `;
   const { rows } = await query(sql, [
@@ -34,6 +34,44 @@ export async function insertLog({ protokol, waktuKirim, waktuTerima, imagePath, 
     waktuKirim,
     waktuTerima,
     imagePath,
+    totalDetections,
+    metadata ? JSON.stringify(metadata) : '{}',
+    scanSessionId || null,
+  ]);
+  return rows[0];
+}
+
+/**
+ * Insert a lightweight QoS-only log entry for frames with no unique pest detections.
+ *
+ * PURPOSE: Ensures EVERY payload received by the server has its transmission
+ * timestamps (waktu_kirim, waktu_terima) recorded in the database, even when
+ * no new pests are detected. This is critical for accurate QoS latency
+ * measurement across all 3-second intervals.
+ *
+ * STORAGE SAFETY: No image is saved to disk (image_path = NULL).
+ * The raw Base64 string is NEVER stored in the database.
+ *
+ * @param {Object} data
+ * @param {string} data.protokol       - 'HTTP' | 'WS' | 'MQTT'
+ * @param {Date}   data.waktuKirim     - ISO timestamp from edge device
+ * @param {Date}   data.waktuTerima    - Server receive timestamp
+ * @param {number} data.totalDetections - Count of detected objects (pre-dedup)
+ * @param {Object} [data.metadata]     - Optional extra fields (session/frame info)
+ * @param {number} [data.scanSessionId] - Active scan session ID
+ * @returns {Promise<{id: bigint, latency_ms: number, created_at: Date}>}
+ */
+export async function insertEmptyLog({ protokol, waktuKirim, waktuTerima, totalDetections, metadata, scanSessionId }) {
+  const sql = `
+    INSERT INTO tb_detection_log
+      (protokol, waktu_kirim, waktu_terima, image_path, total_detections, is_empty_detection, metadata, scan_session_id)
+    VALUES ($1, $2, $3, NULL, $4, TRUE, $5, $6)
+    RETURNING id, latency_ms, created_at
+  `;
+  const { rows } = await query(sql, [
+    protokol,
+    waktuKirim,
+    waktuTerima,
     totalDetections,
     metadata ? JSON.stringify(metadata) : '{}',
     scanSessionId || null,

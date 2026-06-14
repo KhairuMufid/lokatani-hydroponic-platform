@@ -141,7 +141,9 @@ export async function processDetection(payload, protokol) {
   // Update session counters
   await sessionManager.updateSessionCounters(scanSessionId, rawCount, newUniqueCount);
 
-  // ═══ BRANCH A: No unique pests → PASSTHROUGH ═══
+  // ═══ BRANCH A: No unique pests → QoS LOG + PASSTHROUGH ═══
+  // Even without unique pests, we MUST log the timestamps for continuous
+  // QoS latency measurement. No image is saved to disk or database.
   if (uniqueDetections.length === 0) {
     const activePestNames = [...new Set(filteredDetections.map(d => d.class_name).filter(Boolean))];
     const cachedDssData = [];
@@ -151,10 +153,20 @@ export async function processDetection(payload, protokol) {
       }
     }
 
+    // ── QoS Timestamp Persistence (lightweight — no image saved) ──
+    const emptyLogRow = await detectionRepo.insertEmptyLog({
+      protokol,
+      waktuKirim,
+      waktuTerima,
+      totalDetections: filteredDetections.length,
+      metadata: { scan_session_id: scanSessionId, frame_index: frameIndex },
+      scanSessionId: scanSessionId,
+    });
+
     const result = {
       success: true,
-      log_id: `passthrough-${scanSessionId}-${frameIndex}`,
-      latency_ms: Math.round(latencyMs * 100) / 100,
+      log_id: emptyLogRow.id,
+      latency_ms: emptyLogRow.latency_ms,
       image_base64: payload.image_base64,
       image_path: null,
       total_detections: filteredDetections.length,
@@ -163,7 +175,7 @@ export async function processDetection(payload, protokol) {
       details_inserted: 0,
       alert: null,
       dss: cachedDssData,
-      created_at: waktuTerima.toISOString(),
+      created_at: emptyLogRow.created_at,
       scan_session_id: scanSessionId,
       frame_index: frameIndex,
       dedup: {
@@ -176,8 +188,8 @@ export async function processDetection(payload, protokol) {
     setLatestFrame(result);
 
     logger.debug(
-      `[DETECT] ${protokol} | S#${scanSessionId} F${frameIndex} | PASSTHROUGH | ` +
-      `${result.latency_ms}ms | ${rawDetections.length}→${filteredDetections.length}→0 unique`
+      `[DETECT] ${protokol} | S#${scanSessionId} F${frameIndex} | EMPTY log #${emptyLogRow.id} | ` +
+      `${emptyLogRow.latency_ms}ms | ${rawDetections.length}→${filteredDetections.length}→0 unique`
     );
 
     return result;
