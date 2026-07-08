@@ -58,7 +58,7 @@ export default function DashboardPage() {
       <TopBar title="Dashboard" subtitle="Ringkasan sistem monitoring hidroponik" />
       <div className="p-6 space-y-6">
         {/* Primary Stat Cards — Session-Based */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             icon={Bug}
             label="Hama Unik (Sesi Terakhir)"
@@ -74,15 +74,6 @@ export default function DashboardPage() {
             value={sessions.total_today ?? 0}
             subtitle={`${sessions.unique_pests_today ?? 0} hama unik total`}
             color="purple"
-          />
-          <StatCard
-            icon={Filter}
-            label="Rasio Deduplikasi"
-            value={sessions.dedup_ratio != null ? `${sessions.dedup_ratio}%` : '—'}
-            subtitle={sessions.raw_detections_today
-              ? `${sessions.raw_detections_today} raw → ${sessions.unique_pests_today} unik`
-              : 'Belum ada data'}
-            color="blue"
           />
           <StatCard
             icon={AlertTriangle}
@@ -109,7 +100,7 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <p className="text-gray-500 dark:text-gray-400 text-xs mb-0.5">Protokol</p>
                 <p className="font-semibold text-gray-800 dark:text-gray-200">
@@ -132,12 +123,6 @@ export default function DashboardPage() {
                 <p className="text-gray-500 dark:text-gray-400 text-xs mb-0.5">Hama Unik</p>
                 <p className="font-bold text-brand-600 dark:text-brand-400">
                   {latestSession.unique_pests}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500 dark:text-gray-400 text-xs mb-0.5">Deduplikasi</p>
-                <p className="font-semibold text-emerald-600 dark:text-emerald-400">
-                  {latestSession.dedup_ratio != null ? `${latestSession.dedup_ratio}%` : '—'} filtered
                 </p>
               </div>
             </div>

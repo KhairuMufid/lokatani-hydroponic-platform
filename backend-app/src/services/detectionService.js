@@ -18,7 +18,6 @@ import * as pestRepo from '../repositories/pestRepo.js';
 import * as detectionRepo from '../repositories/detectionRepo.js';
 import * as alertService from './alertService.js';
 import * as sessionManager from './sessionManager.js';
-import { processDedup, getPestSummary, clearSession, clearSessionSummary } from './dedupService.js';
 import { saveBase64Image } from '../utils/imageProcessor.js';
 import { captureReceiveTime, calculateLatencyMs } from '../utils/timestampHelper.js';
 import { setLatestFrame } from '../utils/latestFrameBuffer.js';
@@ -28,13 +27,15 @@ import logger from '../utils/logger.js';
 /** Global in-memory cache for DSS data (Zero DB overhead for Branch A) */
 const globalDssCache = new Map();
 
+/** Per-session pest class counters for pest_summary */
+const sessionPestSummaries = new Map();
+
 // Register session completion handler (persist pest summary + cleanup)
 sessionManager.onComplete(async (session) => {
   try {
-    const summary = getPestSummary(session.id);
+    const summary = sessionPestSummaries.get(session.id) || {};
     await sessionManager.updatePestSummary(session.id, summary);
-    clearSession(session.id);
-    clearSessionSummary(session.id);
+    sessionPestSummaries.delete(session.id);
   } catch (err) {
     logger.error(`[DETECT] Failed to finalize session #${session.id}:`, err.message);
   }
@@ -131,12 +132,23 @@ export async function processDetection(payload, protokol) {
     (d) => d.confidence >= minConfidence
   );
 
-  // ─── STAGE 2: Centroid Dedup ───────────────────────
-  const { uniqueDetections, newUniqueCount, rawCount } = processDedup(
-    scanSessionId,
-    frameIndex,
-    filteredDetections
-  );
+  // ─── STAGE 2: Session Tracking ───────────────────────
+  const uniqueDetections = filteredDetections;
+  const newUniqueCount = filteredDetections.length;
+  const rawCount = filteredDetections.length;
+
+  if (filteredDetections.length > 0) {
+    if (!sessionPestSummaries.has(scanSessionId)) {
+      sessionPestSummaries.set(scanSessionId, {});
+    }
+    const summary = sessionPestSummaries.get(scanSessionId);
+    for (const d of filteredDetections) {
+      const className = d.class_name;
+      if (className) {
+        summary[className] = (summary[className] || 0) + 1;
+      }
+    }
+  }
 
   // Update session counters
   await sessionManager.updateSessionCounters(scanSessionId, rawCount, newUniqueCount);

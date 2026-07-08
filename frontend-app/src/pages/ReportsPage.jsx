@@ -142,7 +142,7 @@ export default function ReportsPage() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                       <div>
                         <p className="text-xs text-gray-400 dark:text-gray-500">Frame</p>
                         <p className="font-medium text-gray-700 dark:text-gray-300">
@@ -159,12 +159,6 @@ export default function ReportsPage() {
                         <p className="text-xs text-gray-400 dark:text-gray-500">Hama Unik</p>
                         <p className="font-bold text-brand-600 dark:text-brand-400">
                           {session.unique_pests}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-400 dark:text-gray-500">Deduplikasi</p>
-                        <p className="font-medium text-emerald-600 dark:text-emerald-400">
-                          {session.dedup_ratio != null ? `${session.dedup_ratio}%` : '—'}
                         </p>
                       </div>
                       <div>
