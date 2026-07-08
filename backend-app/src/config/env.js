@@ -53,6 +53,9 @@ const env = Object.freeze({
   JWT_SECRET: process.env.JWT_SECRET || 'super-secret-jwt-key-change-in-production',
   JWT_EXPIRES_IN_SEC: parseInt(process.env.JWT_EXPIRES_IN_SEC || '86400', 10), // 24 hours
   API_KEY: process.env.API_KEY || 'lokatani-edge-device-key',
+
+  // Self-Service Registration
+  REGISTRATION_CODE: process.env.REGISTRATION_CODE || 'LOKATANI2026',
 });
 
 export default env;

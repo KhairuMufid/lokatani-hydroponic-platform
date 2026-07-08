@@ -9,7 +9,8 @@
  *     edge glare highlights, and frosted input fields.
  *   - Micro-interactions: Icon color transitions on focus, shimmer button
  *     effect, smooth error slide-in via max-height transition.
- *   - Strict Constraint: Zero public registration or password recovery links.
+ *   - Integrated Registration: Toggle between Login and Register modes
+ *     with a smooth animated transition.
  *
  * @module pages/Login
  */
@@ -18,13 +19,61 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../stores/useAuthStore.js';
 import { httpClient } from '../services/httpClient.js';
-import { Leaf, Lock, User, Loader2, ShieldCheck } from 'lucide-react';
+import { Leaf, Lock, User, Loader2, ShieldCheck, UserPlus, ArrowLeft, KeyRound, BadgeCheck } from 'lucide-react';
+
+// --- Shared Input Component ---
+// Declared OUTSIDE the parent component to prevent recreation on every render,
+// which causes the input field to lose focus on typing.
+const InputField = ({ icon: Icon, label, type = 'text', value, onChange, placeholder, autoComplete, disabled }) => (
+  <div className="space-y-2">
+    <label className="text-[11px] font-bold uppercase tracking-widest pl-1
+                      text-slate-500 dark:text-slate-400">
+      {label}
+    </label>
+    <div className="relative group">
+      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+        <Icon className="h-4 w-4 transition-colors duration-300
+                         text-slate-400 dark:text-slate-500
+                         group-focus-within:text-emerald-500 dark:group-focus-within:text-emerald-400" />
+      </div>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        className="w-full pl-11 pr-4 py-3.5 rounded-2xl text-sm outline-none
+                   transition-all duration-300 disabled:opacity-50
+                   bg-slate-100/60 dark:bg-slate-900/50
+                   border border-slate-200/80 dark:border-slate-700/50
+                   text-slate-900 dark:text-white
+                   placeholder-slate-400 dark:placeholder-slate-600
+                   focus:ring-2 focus:ring-emerald-500/40 dark:focus:ring-emerald-500/30
+                   focus:border-emerald-400/50 dark:focus:border-emerald-500/40
+                   focus:bg-white/80 dark:focus:bg-slate-800/60"
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+      />
+    </div>
+  </div>
+);
 
 export default function Login() {
+  // --- Mode: 'login' | 'register' ---
+  const [mode, setMode] = useState('login');
+
+  // --- Login state ---
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  // --- Register state ---
+  const [regUsername, setRegUsername] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [regNamaLengkap, setRegNamaLengkap] = useState('');
+  const [regOrgCode, setRegOrgCode] = useState('');
 
   // Interactive Parallax Background State
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -56,7 +105,15 @@ export default function Login() {
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, []);
 
-  const handleSubmit = async (e) => {
+  // --- Switch mode handler ---
+  const switchMode = (newMode) => {
+    setMode(newMode);
+    setError('');
+    setSuccessMessage('');
+  };
+
+  // --- Login handler ---
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -73,6 +130,61 @@ export default function Login() {
         navigate('/', { replace: true });
       } else {
         setError(response.error || 'Kredensial tidak valid');
+      }
+    } catch {
+      setError('Koneksi gagal. Pastikan backend aktif dan terjangkau.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- Register handler ---
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    if (!regUsername || !regPassword || !regOrgCode) {
+      setError('Username, password, dan kode organisasi wajib diisi.');
+      return;
+    }
+
+    if (regPassword.length < 6) {
+      setError('Password minimal 6 karakter.');
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setError('Konfirmasi password tidak cocok.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await httpClient.register({
+        username: regUsername,
+        password: regPassword,
+        nama_lengkap: regNamaLengkap || undefined,
+        organization_code: regOrgCode,
+      });
+
+      if (response.success) {
+        setSuccessMessage(`Registrasi berhasil! Akun "${regUsername}" siap digunakan. Silakan login.`);
+        // Pre-fill login form for convenience
+        setUsername(regUsername);
+        setPassword('');
+        // Clear register fields
+        setRegUsername('');
+        setRegPassword('');
+        setRegConfirmPassword('');
+        setRegNamaLengkap('');
+        setRegOrgCode('');
+        // Auto-switch to login after short delay
+        setTimeout(() => {
+          setMode('login');
+        }, 2500);
+      } else {
+        setError(response.error || 'Registrasi gagal');
       }
     } catch {
       setError('Koneksi gagal. Pastikan backend aktif dan terjangkau.');
@@ -125,7 +237,7 @@ export default function Login() {
                       bg-[size:56px_56px]
                       [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]" />
 
-      <div className="w-full max-w-md relative z-10 px-6">
+      <div className={`w-full relative z-10 px-6 transition-all duration-500 ease-in-out ${mode === 'register' ? 'max-w-2xl' : 'max-w-md'}`}>
 
         {/* ─── Glass Container ─── */}
         <div className="relative overflow-hidden rounded-[2rem]
@@ -163,133 +275,234 @@ export default function Login() {
             </p>
           </div>
 
-          {/* Form */}
+          {/* Form Content */}
           <div className="px-8 pb-12">
-            <form onSubmit={handleSubmit} className="space-y-6">
 
-              {/* Error Banner — smooth slide in/out */}
-              <div className={`overflow-hidden transition-all duration-300 ease-in-out
-                              ${error ? 'max-h-24 opacity-100 mb-2' : 'max-h-0 opacity-0'}`}>
-                <div className="p-3.5 rounded-xl flex items-center gap-2.5 text-sm font-semibold
-                                bg-red-100/80 dark:bg-red-500/10
-                                border border-red-300/50 dark:border-red-500/25
-                                text-red-700 dark:text-red-400
-                                backdrop-blur-md">
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
-                  </svg>
-                  {error}
-                </div>
+            {/* ─── Success Banner ─── */}
+            <div className={`overflow-hidden transition-all duration-300 ease-in-out
+                            ${successMessage ? 'max-h-24 opacity-100 mb-4' : 'max-h-0 opacity-0'}`}>
+              <div className="p-3.5 rounded-xl flex items-center gap-2.5 text-sm font-semibold
+                              bg-emerald-100/80 dark:bg-emerald-500/10
+                              border border-emerald-300/50 dark:border-emerald-500/25
+                              text-emerald-700 dark:text-emerald-400
+                              backdrop-blur-md">
+                <BadgeCheck className="w-4 h-4 shrink-0" />
+                {successMessage}
               </div>
+            </div>
 
-              {/* Username */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold uppercase tracking-widest pl-1
-                                  text-slate-500 dark:text-slate-400">
-                  Operator ID
-                </label>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <User className="h-4 w-4 transition-colors duration-300
-                                     text-slate-400 dark:text-slate-500
-                                     group-focus-within:text-emerald-500 dark:group-focus-within:text-emerald-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+            {/* ─── Error Banner ─── */}
+            <div className={`overflow-hidden transition-all duration-300 ease-in-out
+                            ${error ? 'max-h-24 opacity-100 mb-4' : 'max-h-0 opacity-0'}`}>
+              <div className="p-3.5 rounded-xl flex items-center gap-2.5 text-sm font-semibold
+                              bg-red-100/80 dark:bg-red-500/10
+                              border border-red-300/50 dark:border-red-500/25
+                              text-red-700 dark:text-red-400
+                              backdrop-blur-md">
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+                </svg>
+                {error}
+              </div>
+            </div>
+
+            {/* ═══ LOGIN FORM ═══ */}
+            {mode === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-6">
+                <InputField
+                  icon={User}
+                  label="Operator ID"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Masukkan username"
+                  autoComplete="username"
+                  disabled={isLoading}
+                />
+
+                <InputField
+                  icon={Lock}
+                  label="Passcode"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  disabled={isLoading}
+                />
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="relative w-full overflow-hidden flex items-center justify-center gap-2
+                             py-4 px-4 mt-6 rounded-2xl text-sm font-bold
+                             bg-emerald-500 text-white
+                             transition-all duration-300
+                             hover:bg-emerald-400 hover:-translate-y-0.5
+                             hover:shadow-[0_0_35px_rgba(16,185,129,0.45)]
+                             active:translate-y-0 active:shadow-[0_0_15px_rgba(16,185,129,0.3)]
+                             focus:ring-4 focus:ring-emerald-500/30
+                             disabled:opacity-60 disabled:cursor-not-allowed
+                             disabled:hover:shadow-none disabled:hover:translate-y-0
+                             group"
+                >
+                  {/* Shimmer overlay */}
+                  <div className="absolute inset-0 -translate-x-full
+                                  bg-gradient-to-r from-transparent via-white/25 to-transparent
+                                  group-hover:animate-shimmer pointer-events-none" />
+
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Authenticating...
+                    </>
+                  ) : (
+                    'Authorize Access'
+                  )}
+                </button>
+              </form>
+            )}
+
+            {/* ═══ REGISTER FORM ═══ */}
+            {mode === 'register' && (
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <InputField
+                    icon={User}
+                    label="Username"
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="Buat username baru"
+                    autoComplete="off"
                     disabled={isLoading}
-                    className="w-full pl-11 pr-4 py-3.5 rounded-2xl text-sm outline-none
-                               transition-all duration-300 disabled:opacity-50
-                               bg-slate-100/60 dark:bg-slate-900/50
-                               border border-slate-200/80 dark:border-slate-700/50
-                               text-slate-900 dark:text-white
-                               placeholder-slate-400 dark:placeholder-slate-600
-                               focus:ring-2 focus:ring-emerald-500/40 dark:focus:ring-emerald-500/30
-                               focus:border-emerald-400/50 dark:focus:border-emerald-500/40
-                               focus:bg-white/80 dark:focus:bg-slate-800/60"
-                    placeholder="admin"
-                    autoComplete="username"
+                  />
+
+                  <InputField
+                    icon={BadgeCheck}
+                    label="Nama Lengkap (Opsional)"
+                    value={regNamaLengkap}
+                    onChange={(e) => setRegNamaLengkap(e.target.value)}
+                    placeholder="Nama pengelola"
+                    autoComplete="name"
+                    disabled={isLoading}
                   />
                 </div>
-              </div>
 
-              {/* Password */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold uppercase tracking-widest pl-1
-                                  text-slate-500 dark:text-slate-400">
-                  Passcode
-                </label>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Lock className="h-4 w-4 transition-colors duration-300
-                                     text-slate-400 dark:text-slate-500
-                                     group-focus-within:text-emerald-500 dark:group-focus-within:text-emerald-400" />
-                  </div>
-                  <input
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <InputField
+                    icon={Lock}
+                    label="Password"
                     type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="Minimal 6 karakter"
+                    autoComplete="new-password"
                     disabled={isLoading}
-                    className="w-full pl-11 pr-4 py-3.5 rounded-2xl text-sm outline-none
-                               transition-all duration-300 disabled:opacity-50
-                               bg-slate-100/60 dark:bg-slate-900/50
-                               border border-slate-200/80 dark:border-slate-700/50
-                               text-slate-900 dark:text-white
-                               placeholder-slate-400 dark:placeholder-slate-600
-                               focus:ring-2 focus:ring-emerald-500/40 dark:focus:ring-emerald-500/30
-                               focus:border-emerald-400/50 dark:focus:border-emerald-500/40
-                               focus:bg-white/80 dark:focus:bg-slate-800/60"
-                    placeholder="••••••••"
-                    autoComplete="current-password"
+                  />
+
+                  <InputField
+                    icon={Lock}
+                    label="Konfirmasi Password"
+                    type="password"
+                    value={regConfirmPassword}
+                    onChange={(e) => setRegConfirmPassword(e.target.value)}
+                    placeholder="Ketik ulang password"
+                    autoComplete="new-password"
+                    disabled={isLoading}
                   />
                 </div>
-              </div>
 
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="relative w-full overflow-hidden flex items-center justify-center gap-2
-                           py-4 px-4 mt-6 rounded-2xl text-sm font-bold
-                           bg-emerald-500 text-white
-                           transition-all duration-300
-                           hover:bg-emerald-400 hover:-translate-y-0.5
-                           hover:shadow-[0_0_35px_rgba(16,185,129,0.45)]
-                           active:translate-y-0 active:shadow-[0_0_15px_rgba(16,185,129,0.3)]
-                           focus:ring-4 focus:ring-emerald-500/30
-                           disabled:opacity-60 disabled:cursor-not-allowed
-                           disabled:hover:shadow-none disabled:hover:translate-y-0
-                           group"
-              >
-                {/* Shimmer overlay */}
-                <div className="absolute inset-0 -translate-x-full
-                                bg-gradient-to-r from-transparent via-white/25 to-transparent
-                                group-hover:animate-shimmer pointer-events-none" />
+                <InputField
+                  icon={KeyRound}
+                  label="Kode Organisasi"
+                  value={regOrgCode}
+                  onChange={(e) => setRegOrgCode(e.target.value)}
+                  placeholder="Kode dari administrator Lokatani"
+                  autoComplete="off"
+                  disabled={isLoading}
+                />
 
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Authenticating...
-                  </>
-                ) : (
-                  'Authorize Access'
-                )}
-              </button>
-            </form>
+                {/* Register Button */}
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="relative w-full overflow-hidden flex items-center justify-center gap-2
+                             py-3.5 px-4 mt-2 rounded-2xl text-sm font-bold
+                             bg-teal-500 text-white
+                             transition-all duration-300
+                             hover:bg-teal-400 hover:-translate-y-0.5
+                             hover:shadow-[0_0_35px_rgba(20,184,166,0.45)]
+                             active:translate-y-0 active:shadow-[0_0_15px_rgba(20,184,166,0.3)]
+                             focus:ring-4 focus:ring-teal-500/30
+                             disabled:opacity-60 disabled:cursor-not-allowed
+                             disabled:hover:shadow-none disabled:hover:translate-y-0
+                             group"
+                >
+                  <div className="absolute inset-0 -translate-x-full
+                                  bg-gradient-to-r from-transparent via-white/25 to-transparent
+                                  group-hover:animate-shimmer pointer-events-none" />
 
-            {/* Footer divider + restriction notice */}
-            <div className="mt-10 pt-6 relative
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Memproses...
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      Daftar Akun Baru
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+
+            {/* ─── Mode Switcher ─── */}
+            <div className="mt-8 pt-6 relative
                             border-t border-slate-200/60 dark:border-slate-700/50">
-              <div className="flex justify-center">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-center leading-relaxed
-                                 text-slate-400 dark:text-slate-500">
-                  Dashboard Operasional Rahasia<br/>
-                  <span className="text-slate-300 dark:text-slate-600">
-                    Akses Khusus Personel Berwenang
-                  </span>
-                </span>
-              </div>
+              {mode === 'login' ? (
+                <div className="text-center space-y-3">
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    Belum memiliki akun?
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => switchMode('register')}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
+                               transition-all duration-300
+                               text-emerald-600 dark:text-emerald-400
+                               bg-emerald-50/80 dark:bg-emerald-500/10
+                               border border-emerald-200/60 dark:border-emerald-500/20
+                               hover:bg-emerald-100/80 dark:hover:bg-emerald-500/15
+                               hover:-translate-y-0.5
+                               hover:shadow-md hover:shadow-emerald-500/10"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Daftar Sebagai Pengelola
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center space-y-3">
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    Sudah memiliki akun?
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => switchMode('login')}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
+                               transition-all duration-300
+                               text-slate-600 dark:text-slate-300
+                               bg-slate-100/80 dark:bg-slate-800/50
+                               border border-slate-200/60 dark:border-slate-700/50
+                               hover:bg-slate-200/80 dark:hover:bg-slate-700/50
+                               hover:-translate-y-0.5
+                               hover:shadow-md hover:shadow-slate-500/10"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Kembali ke Login
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

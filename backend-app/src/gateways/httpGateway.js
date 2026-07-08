@@ -31,6 +31,13 @@ const router = Router();
 router.post('/api/auth/login', authController.login);
 
 /**
+ * POST /api/auth/register
+ * Public endpoint for self-service user registration.
+ * Protected by organization code validation (not auth middleware).
+ */
+router.post('/api/auth/register', authController.register);
+
+/**
  * GET /api/auth/me
  * Get current user profile.
  */

@@ -5,12 +5,16 @@
 
 -- 0. Admin Users
 CREATE TABLE IF NOT EXISTS tb_users (
-    id          SERIAL PRIMARY KEY,
-    username    VARCHAR(50) NOT NULL UNIQUE,
-    password    VARCHAR(255) NOT NULL,
-    role        VARCHAR(20) DEFAULT 'admin',
-    created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    id            SERIAL PRIMARY KEY,
+    username      VARCHAR(50) NOT NULL UNIQUE,
+    password      VARCHAR(255) NOT NULL,
+    nama_lengkap  VARCHAR(100),
+    role          VARCHAR(20) DEFAULT 'operator',
+    created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Migration helper for existing deployments (idempotent)
+ALTER TABLE tb_users ADD COLUMN IF NOT EXISTS nama_lengkap VARCHAR(100);
 
 -- 1. Pest Master Data
 CREATE TABLE IF NOT EXISTS tb_hama (

@@ -1,7 +1,94 @@
 import { query } from '../config/database.js';
-import { verifyPassword } from '../utils/passwordHelper.js';
+import { hashPassword, verifyPassword } from '../utils/passwordHelper.js';
 import { signJWT } from '../utils/jwtHelper.js';
+import env from '../config/env.js';
 import logger from '../utils/logger.js';
+
+/**
+ * Handle new user registration.
+ *
+ * Security: Requires a shared organization code (REGISTRATION_CODE env var)
+ * to prevent arbitrary public sign-ups while allowing self-service registration
+ * for authorized farm personnel without manual admin intervention.
+ *
+ * New users are automatically assigned the 'operator' role and can login immediately.
+ */
+export async function register(req, res) {
+  try {
+    const { username, password, nama_lengkap, organization_code } = req.body;
+
+    // --- Validate required fields ---
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username dan password wajib diisi',
+      });
+    }
+
+    // --- Validate organization code ---
+    if (!organization_code || organization_code !== env.REGISTRATION_CODE) {
+      logger.warn(`[AUTH] Registration rejected — invalid organization code for username: ${username}`);
+      return res.status(403).json({
+        success: false,
+        error: 'Kode organisasi tidak valid. Hubungi administrator Lokatani untuk mendapatkan kode.',
+      });
+    }
+
+    // --- Validate username format (alphanumeric + underscore, 3-30 chars) ---
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username harus 3-30 karakter (huruf, angka, atau underscore)',
+      });
+    }
+
+    // --- Validate password length ---
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password minimal 6 karakter',
+      });
+    }
+
+    // --- Check username uniqueness ---
+    const existing = await query('SELECT id FROM tb_users WHERE username = $1', [username]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'Username sudah terdaftar. Silakan gunakan username lain.',
+      });
+    }
+
+    // --- Hash password & insert user ---
+    const hashedPassword = hashPassword(password);
+    const insertSql = `
+      INSERT INTO tb_users (username, password, nama_lengkap, role)
+      VALUES ($1, $2, $3, 'operator')
+      RETURNING id, username, nama_lengkap, role, created_at
+    `;
+    const { rows } = await query(insertSql, [
+      username,
+      hashedPassword,
+      nama_lengkap || null,
+    ]);
+
+    const newUser = rows[0];
+    logger.info(`[AUTH] ✅ New user registered: ${newUser.username} (role: ${newUser.role})`);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: newUser.id,
+        username: newUser.username,
+        nama_lengkap: newUser.nama_lengkap,
+        role: newUser.role,
+      },
+    });
+  } catch (error) {
+    logger.error('[AUTH] Registration error:', error.message);
+    res.status(500).json({ success: false, error: 'Terjadi kesalahan server' });
+  }
+}
 
 /**
  * Handle human login to generate JWT.

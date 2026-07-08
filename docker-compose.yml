@@ -103,6 +103,7 @@ services:
       UPLOAD_DIR: uploads/images
       LOG_LEVEL: INFO
       MIN_CONFIDENCE: 0.60
+      REGISTRATION_CODE: ${REGISTRATION_CODE:-LOKATANI2026}
     volumes:
       - backend-uploads:/app/uploads/images
     logging:

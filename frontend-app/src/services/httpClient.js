@@ -67,4 +67,9 @@ export const httpClient = {
       method: 'POST',
       body: JSON.stringify({ username, password })
     }),
+  register: (data) =>
+    request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
 };
