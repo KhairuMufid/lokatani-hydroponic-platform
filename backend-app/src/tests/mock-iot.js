@@ -1,16 +1,18 @@
 /**
- * Mock IoT Node — QoS Stress-Test Client (Explicit Session Protocol)
+ * Mock IoT Node — QoS Stress-Test & Reliability Test Client
  *
  * Simulates a Raspberry Pi 4 edge device using the new explicit session
  * lifecycle: START → SCAN POINTS → END → GAP → repeat.
  *
  * Usage:
  *   node src/tests/mock-iot.js <PROTOCOL> <SCAN_POINTS> <SESSIONS>
+ *   node src/tests/mock-iot.js RELIABILITY_HTTP
  *
  * Examples:
- *   node src/tests/mock-iot.js HTTP 5 3     # 5 scan points per session, 3 sessions via HTTP
- *   node src/tests/mock-iot.js WS   8 2     # 8 scan points, 2 sessions via WebSocket
- *   node src/tests/mock-iot.js MQTT 5 3     # 5 scan points, 3 sessions via MQTT
+ *   node src/tests/mock-iot.js HTTP 5 3          # 5 scan points per session, 3 sessions via HTTP
+ *   node src/tests/mock-iot.js WS   8 2          # 8 scan points, 2 sessions via WebSocket
+ *   node src/tests/mock-iot.js MQTT 5 3          # 5 scan points, 3 sessions via MQTT
+ *   node src/tests/mock-iot.js RELIABILITY_HTTP  # Continuous 3s HTTP loop for DB reliability test
  *
  * Each scan point simulates the slider stopping, running YOLO burst,
  * and sending the single best frame to the backend.
@@ -42,22 +44,60 @@ try {
 // ─── Parse CLI Arguments ─────────────────────────────
 const [, , protocol, scanPointsStr, sessionsStr] = process.argv;
 
-if (!protocol || !scanPointsStr || !sessionsStr) {
+const API_KEY = process.env.API_KEY || 'HydroTect-Edge-Device-Key';
+const PROTOCOL = protocol ? protocol.toUpperCase() : '';
+
+// Target GCP VM IP as default
+const TARGET_HOST = process.env.TARGET_HOST || '34.101.92.242';
+
+// Helper to construct HTTP base URL
+function getHTTPBase(defaultPort) {
+  if (TARGET_HOST.startsWith('http://') || TARGET_HOST.startsWith('https://')) {
+    return TARGET_HOST;
+  }
+  if (TARGET_HOST === 'localhost' || TARGET_HOST === '127.0.0.1') {
+    return `http://${TARGET_HOST}:${defaultPort}`;
+  }
+  if (TARGET_HOST.includes(':')) {
+    return `http://${TARGET_HOST}`;
+  }
+  // Production reverse proxy defaults to Nginx on port 80
+  return `http://${TARGET_HOST}`;
+}
+
+// Helper to construct WS URL
+function getWSUrl(defaultPort) {
+  if (TARGET_HOST.startsWith('ws://') || TARGET_HOST.startsWith('wss://')) {
+    return `${TARGET_HOST}?api_key=${API_KEY}`;
+  }
+  if (TARGET_HOST === 'localhost' || TARGET_HOST === '127.0.0.1') {
+    return `ws://${TARGET_HOST}:${defaultPort}?api_key=${API_KEY}`;
+  }
+  if (TARGET_HOST.includes(':')) {
+    return `ws://${TARGET_HOST}?api_key=${API_KEY}`;
+  }
+  // Production reverse proxy default path for WS
+  return `ws://${TARGET_HOST}/ws?api_key=${API_KEY}`;
+}
+
+// RELIABILITY modes don't need SCAN_POINTS/SESSIONS
+const IS_RELIABILITY_MODE = PROTOCOL.startsWith('RELIABILITY_');
+
+if (!IS_RELIABILITY_MODE && (!protocol || !scanPointsStr || !sessionsStr)) {
   console.error('Usage: node src/tests/mock-iot.js <HTTP|WS|MQTT> <SCAN_POINTS> <SESSIONS>');
+  console.error('       node src/tests/mock-iot.js RELIABILITY_HTTP');
   console.error('  SCAN_POINTS: Number of scan points per session (slider stop positions)');
   console.error('  SESSIONS:    Number of complete scan sessions to simulate');
   process.exit(1);
 }
 
-const API_KEY = process.env.API_KEY || 'lokatani-edge-device-key';
-const PROTOCOL = protocol.toUpperCase();
-const SCAN_POINTS = parseInt(scanPointsStr, 10);
-const SESSIONS = parseInt(sessionsStr, 10);
+const SCAN_POINTS = parseInt(scanPointsStr, 10) || 0;
+const SESSIONS = parseInt(sessionsStr, 10) || 0;
 const SCAN_INTERVAL_MS = 2000;  // 2s between scan points (simulates 10s burst, best frame)
 const SESSION_GAP_MS = 3000;    // 3s gap between sessions
 
-if (!['HTTP', 'WS', 'MQTT'].includes(PROTOCOL)) {
-  console.error(`Invalid protocol: "${PROTOCOL}". Use HTTP, WS, or MQTT.`);
+if (!IS_RELIABILITY_MODE && !['HTTP', 'WS', 'MQTT'].includes(PROTOCOL)) {
+  console.error(`Invalid protocol: "${PROTOCOL}". Use HTTP, WS, MQTT, or RELIABILITY_HTTP.`);
   process.exit(1);
 }
 
@@ -83,10 +123,11 @@ function generateDetections() {
 
 function buildPayload(sessionId) {
   return {
+    scan_session_id: sessionId,
     timestamp: new Date().toISOString(),
     image_base64: IMAGE_BASE64,
     detections: generateDetections(),
-    scan_session_id: sessionId,
+    min_confidence: 0.60,
   };
 }
 
@@ -138,7 +179,7 @@ function sleep(ms) {
 // ─── HTTP Client ─────────────────────────────────────
 async function runHTTP() {
   const PORT = process.env.PORT_HTTP || 3000;
-  const BASE = `http://localhost:${PORT}`;
+  const BASE = getHTTPBase(PORT);
   const headers = { 'Content-Type': 'application/json', 'x-api-key': API_KEY };
 
   for (let s = 1; s <= SESSIONS; s++) {
@@ -218,7 +259,7 @@ async function runHTTP() {
 async function runWS() {
   const { default: WebSocket } = await import('ws');
   const PORT = process.env.PORT_WS || 8080;
-  const ws = new WebSocket(`ws://localhost:${PORT}?api_key=${API_KEY}`);
+  const ws = new WebSocket(getWSUrl(PORT));
 
   // Response handlers (promise-based)
   const pendingResponses = new Map();
@@ -315,7 +356,7 @@ async function runWS() {
 // ─── MQTT Client ─────────────────────────────────────
 async function runMQTT() {
   const { default: mqtt } = await import('mqtt');
-  const BROKER = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
+  const BROKER = process.env.MQTT_BROKER_URL || `mqtt://${TARGET_HOST}:1883`;
   const client = mqtt.connect(BROKER, {
     clientId: `mock-iot-${Date.now()}`,
     clean: true,
@@ -427,11 +468,126 @@ async function runMQTT() {
   });
 }
 
+// ─── RELIABILITY_HTTP — Continuous Loop for DB Failure Testing ───
+/**
+ * Simulates continuous detection data flow via HTTP (every 3 seconds)
+ * for testing database failure recovery. This mode:
+ *   - Runs INDEFINITELY (Ctrl+C to stop)
+ *   - NEVER crashes on HTTP 500 / network errors
+ *   - Prints clear status per cycle (✅ success or ⚠️ failure + status code)
+ *   - Uses a single long-running session to keep data flowing
+ *
+ * Usage:  node src/tests/mock-iot.js RELIABILITY_HTTP
+ */
+async function runReliabilityHTTP() {
+  const PORT = process.env.PORT_HTTP || 3000;
+  const BASE = getHTTPBase(PORT);
+  const headers = { 'Content-Type': 'application/json', 'x-api-key': API_KEY };
+  const SEND_INTERVAL_MS = 3000; // 3 seconds — mimics real camera cycle
+
+  console.log('╔══════════════════════════════════════════════════════╗');
+  console.log('║   RELIABILITY TEST — Continuous HTTP Detection Loop  ║');
+  console.log('║   Interval: 3s | Target: POST /api/detect           ║');
+  console.log('║   Press Ctrl+C to stop                              ║');
+  console.log('╚══════════════════════════════════════════════════════╝\n');
+
+  // --- 1. Start a persistent session ---
+  let sessionId = null;
+  while (sessionId === null) {
+    try {
+      const res = await fetch(`${BASE}/api/session/start`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ protokol: 'HTTP' }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        sessionId = json.data.sessionId;
+        console.log(`🟢 Session #${sessionId} started — beginning continuous detection loop\n`);
+      } else {
+        console.warn(`⚠️  Session start failed: ${json.error} — retrying in 3s...`);
+        await sleep(SEND_INTERVAL_MS);
+      }
+    } catch (err) {
+      console.warn(`⚠️  Cannot reach backend: ${err.message} — retrying in 3s...`);
+      await sleep(SEND_INTERVAL_MS);
+    }
+  }
+
+  // --- 2. Continuous detection loop ---
+  let cycle = 0;
+  let successCount = 0;
+  let failCount = 0;
+
+  // Graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\n\n🛑 Reliability test stopped by user.');
+    console.log('════════════════════════════════════════');
+    console.log(`   Total Cycles:  ${cycle}`);
+    console.log(`   Success:       ${successCount}`);
+    console.log(`   Failed:        ${failCount}`);
+    console.log('════════════════════════════════════════\n');
+    process.exit(0);
+  });
+
+  while (true) {
+    cycle++;
+    const payload = buildPayload(sessionId);
+    const sendTime = Date.now();
+    const timestamp = new Date(sendTime).toISOString();
+
+    try {
+      const res = await fetch(`${BASE}/api/detect`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        successCount++;
+        const rtt = Date.now() - sendTime;
+        console.log(
+          `[${timestamp}] ✅ Cycle #${cycle} | HTTP ${res.status} | ` +
+          `RTT: ${rtt}ms | Detections: ${data.data?.total_detections ?? '?'} | ` +
+          `Latency: ${data.data?.latency_ms?.toFixed(1) ?? '?'}ms`
+        );
+      } else {
+        failCount++;
+        // Read body for error details but don't crash
+        let errorMsg = '';
+        try { const body = await res.json(); errorMsg = body.error || ''; } catch { /* ignore */ }
+        console.warn(
+          `[${timestamp}] ⚠️  Cycle #${cycle} | HTTP ${res.status} | ` +
+          `Error: ${errorMsg || res.statusText} | ` +
+          `Backend returned error — will retry in ${SEND_INTERVAL_MS / 1000}s`
+        );
+      }
+    } catch (err) {
+      failCount++;
+      console.warn(
+        `[${timestamp}] ❌ Cycle #${cycle} | NETWORK ERROR | ` +
+        `${err.message} | Will retry in ${SEND_INTERVAL_MS / 1000}s`
+      );
+    }
+
+    await sleep(SEND_INTERVAL_MS);
+  }
+}
+
 // ─── Main ────────────────────────────────────────────
-console.log(`\n🚀 Mock IoT — ${PROTOCOL} | ${SCAN_POINTS} scan points × ${SESSIONS} sessions\n`);
+if (IS_RELIABILITY_MODE) {
+  console.log(`\n🚀 Mock IoT — ${PROTOCOL} | Continuous Reliability Test\n`);
+} else {
+  console.log(`\n🚀 Mock IoT — ${PROTOCOL} | ${SCAN_POINTS} scan points × ${SESSIONS} sessions\n`);
+}
 
 switch (PROTOCOL) {
   case 'HTTP': runHTTP(); break;
   case 'WS': runWS(); break;
   case 'MQTT': runMQTT(); break;
+  case 'RELIABILITY_HTTP': runReliabilityHTTP(); break;
+  default:
+    console.error(`Unknown protocol: ${PROTOCOL}`);
+    process.exit(1);
 }
