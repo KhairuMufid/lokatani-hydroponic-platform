@@ -1,16 +1,9 @@
-/**
- * MQTT Client Factory & Topic Definitions
- *
- * Creates a pre-configured MQTT client that connects to the external
- * Mosquitto broker. Exports topic constants for consistent usage
- * across gateways and controllers.
- *
- * @module config/mqtt
- */
-
 import mqtt from 'mqtt';
 import env from './env.js';
 import logger from '../utils/logger.js';
+import { markDown, markUp } from '../utils/recoveryTracker.js';
+
+const SERVICE_NAME = 'MQTT_BROKER';
 
 /** Canonical MQTT topic map */
 export const TOPICS = Object.freeze({
@@ -36,6 +29,7 @@ export const TOPICS = Object.freeze({
 /**
  * Create and return a connected MQTT client instance.
  * Handles connection, error, and reconnect events internally.
+ * Integrates automated Recovery Time measurement for reliability testing.
  * @returns {import('mqtt').MqttClient}
  */
 export function createMqttClient() {
@@ -47,6 +41,8 @@ export function createMqttClient() {
   });
 
   client.on('connect', () => {
+    // If recovering from an outage, markUp calculates and logs Recovery Time
+    markUp(SERVICE_NAME);
     logger.info(`[MQTT] Connected to broker: ${env.MQTT_BROKER_URL}`);
   });
 
@@ -59,7 +55,14 @@ export function createMqttClient() {
   });
 
   client.on('offline', () => {
+    // Record the exact moment the broker became unreachable
+    markDown(SERVICE_NAME);
     logger.warn('[MQTT] Client went offline');
+  });
+
+  client.on('close', () => {
+    // 'close' fires when the TCP socket is destroyed (broker killed)
+    markDown(SERVICE_NAME);
   });
 
   return client;
